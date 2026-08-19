@@ -101,6 +101,9 @@ type CollectibleVisual = {
   particlePositions: Float32Array;
   particleVelocities: Float32Array;
   particlePhases: Float32Array;
+  particleRadii: Float32Array;
+  particleAngularSpeeds: Float32Array;
+  particleBaseHeights: Float32Array;
   baseY: number;
   elapsed: number;
   burst: number;
@@ -130,10 +133,11 @@ const glowTexture = new THREE.CanvasTexture((()=>{
   context.fillStyle=gradient; context.fillRect(0,0,64,64); return canvas;
 })());
 const glowMaterial = new THREE.SpriteMaterial({map:glowTexture,color:0xffc83d,transparent:true,opacity:.62,blending:THREE.AdditiveBlending,depthWrite:false});
-const particleMaterial = new THREE.PointsMaterial({color:0xffd45a,size:.075,transparent:true,opacity:.72,blending:THREE.AdditiveBlending,depthWrite:false,sizeAttenuation:true});
+const particleMaterial = new THREE.PointsMaterial({color:0xffe08a,size:.14,transparent:true,opacity:.95,blending:THREE.AdditiveBlending,depthWrite:false,depthTest:false,sizeAttenuation:true});
 
 function createCollectibleVisual(root:THREE.Group,displayScale:number):CollectibleVisual {
   const effectScale=displayScale/1.35;
+  const auraScale=Math.max(effectScale,.9);
   const ring=new THREE.Mesh(new THREE.TorusGeometry(.62*effectScale,.07*effectScale,8,24),new THREE.MeshBasicMaterial({color:0xffcf48,transparent:true,opacity:.78,blending:THREE.AdditiveBlending,depthWrite:false}));
   ring.rotation.x=Math.PI/2; ring.position.y=.12*effectScale; root.add(ring);
   const glow=new THREE.Sprite(glowMaterial.clone()); glow.scale.set(2.1*effectScale,2.1*effectScale,1); glow.position.y=.65*effectScale; root.add(glow);
@@ -141,22 +145,28 @@ function createCollectibleVisual(root:THREE.Group,displayScale:number):Collectib
   const particlePositions=new Float32Array(count*3);
   const particleVelocities=new Float32Array(count*3);
   const particlePhases=new Float32Array(count);
+  const particleRadii=new Float32Array(count);
+  const particleAngularSpeeds=new Float32Array(count);
+  const particleBaseHeights=new Float32Array(count);
   for(let i=0;i<count;i++){
-    const angle=Math.random()*Math.PI*2; const radius=(.35+Math.random()*.45)*effectScale;
+    const angle=Math.random()*Math.PI*2; const radius=(.58+Math.random()*.38)*auraScale;
     particlePositions[i*3]=Math.cos(angle)*radius;
-    particlePositions[i*3+1]=(.25+Math.random()*.8)*effectScale;
+    particlePositions[i*3+1]=(.18+Math.random()*.82)*auraScale;
     particlePositions[i*3+2]=Math.sin(angle)*radius;
-    particleVelocities[i*3]=(Math.random()-.5)*.12*effectScale;
-    particleVelocities[i*3+1]=(.12+Math.random()*.18)*effectScale;
-    particleVelocities[i*3+2]=(Math.random()-.5)*.12*effectScale;
+    particleVelocities[i*3]=(Math.random()-.5)*.12*auraScale;
+    particleVelocities[i*3+1]=(.12+Math.random()*.18)*auraScale;
+    particleVelocities[i*3+2]=(Math.random()-.5)*.12*auraScale;
     particlePhases[i]=Math.random()*Math.PI*2;
+    particleRadii[i]=radius;
+    particleAngularSpeeds[i]=.75+Math.random()*.65;
+    particleBaseHeights[i]=particlePositions[i*3+1];
   }
   const geometry=new THREE.BufferGeometry();
   geometry.setAttribute('position',new THREE.BufferAttribute(particlePositions,3));
   const particles=new THREE.Points(geometry,particleMaterial.clone());
   (particles.material as THREE.PointsMaterial).size*=effectScale;
   root.add(particles);
-  return {root,model:new THREE.Group(),glow,ring,particles,particlePositions,particleVelocities,particlePhases,baseY:root.position.y,elapsed:Math.random()*6,burst:0};
+  return {root,model:new THREE.Group(),glow,ring,particles,particlePositions,particleVelocities,particlePhases,particleRadii,particleAngularSpeeds,particleBaseHeights,baseY:root.position.y,elapsed:Math.random()*6,burst:0};
 }
 
 function loadCollectibleModel(item:Item, modelUrl:string, displayScale:number, type:string) {
@@ -165,7 +175,6 @@ function loadCollectibleModel(item:Item, modelUrl:string, displayScale:number, t
     const bounds=new THREE.Box3().setFromObject(model);
     const size=bounds.getSize(new THREE.Vector3());
     model.scale.setScalar(displayScale/Math.max(size.y,.001));
-    if(type==='agua') model.rotation.y=item.modelYaw??-Math.PI/4;
     model.updateMatrixWorld(true);
     const normalizedBounds=new THREE.Box3().setFromObject(model);
     model.position.y=-normalizedBounds.min.y+.15;
@@ -181,6 +190,17 @@ function loadCollectibleModel(item:Item, modelUrl:string, displayScale:number, t
               material.roughness=Math.min(material.roughness,.24);
               material.emissive.setRGB(.14,.14,.14);
               material.emissiveIntensity=.3;
+            }
+          });
+        }
+        if(type==='hospital'){
+          const materials=Array.isArray(mesh.material)?mesh.material:[mesh.material];
+          materials.forEach(material=>{
+            if(material instanceof THREE.MeshStandardMaterial || material instanceof THREE.MeshPhysicalMaterial){
+              material.color.multiplyScalar(1.22);
+              material.roughness=Math.min(material.roughness,.38);
+              material.emissive.setRGB(.08,.08,.08);
+              material.emissiveIntensity=.22;
             }
           });
         }
@@ -208,6 +228,7 @@ function obstacle(x:number,z:number) {
 }
 createCollectible({type:'bypass',modelUrl:'/assets/collectibles/bypass.glb',displayScale:.78,x:-3.2,z:34,label:'Bypass / infraestructura',points:100,feedbackTitle:'OBRA EJECUTADA',feedbackBody:'Bypass / infraestructura'});
 createCollectible({type:'agua',modelUrl:'/assets/collectibles/agua.glb',displayScale:1.05,x:0,z:50,label:'Agua de emergencia',points:100,feedbackTitle:'OBRA EJECUTADA',feedbackBody:'Agua de emergencia',rotationSpeed:.18,keepFrontFacing:true,modelYaw:Math.PI/4});
+createCollectible({type:'hospital',modelUrl:'/assets/collectibles/hospital.glb',displayScale:1.15,x:-3.2,z:82,label:'Hospital / atención de emergencia',points:100,feedbackTitle:'OBRA EJECUTADA',feedbackBody:'Hospital / atención de emergencia',rotationSpeed:.28,keepFrontFacing:true,modelYaw:.26});
 function collectible(x:number,z:number,label:string) {
   const g = new THREE.Group();
   const ring = new THREE.Mesh(new THREE.TorusGeometry(.48,.10,10,28),matGold);
@@ -276,7 +297,7 @@ function updateCollectibleVisual(item:Item,dt:number) {
     const progress=Math.min(collectionTime/.6,1);
     const eased=progress*progress*(3-2*progress);
     visual.root.rotation.y+=dt*((item.rotationSpeed??.45)+progress*12);
-    if(item.keepFrontFacing) visual.model.rotation.y=-visual.root.rotation.y;
+    if(item.keepFrontFacing) visual.model.rotation.y=(item.modelYaw??0)-visual.root.rotation.y;
     visual.root.position.y=visual.baseY+eased*.65;
     const scale=progress<.25 ? 1+progress/.25*.25 : 1.25*(1-(progress-.25)/.75);
     visual.root.scale.setScalar(Math.max(0,scale));
@@ -289,7 +310,7 @@ function updateCollectibleVisual(item:Item,dt:number) {
     }
   } else {
     visual.root.rotation.y+=dt*(item.rotationSpeed??.45);
-    if(item.keepFrontFacing) visual.model.rotation.y=-visual.root.rotation.y;
+    if(item.keepFrontFacing) visual.model.rotation.y=(item.modelYaw??0)-visual.root.rotation.y;
     visual.root.position.y=visual.baseY+Math.sin(visual.elapsed*2)*.12;
     const pulse=1+Math.sin(visual.elapsed*2.5)*.04;
     visual.root.scale.setScalar(pulse);
@@ -297,14 +318,12 @@ function updateCollectibleVisual(item:Item,dt:number) {
   }
   const positions=visual.particlePositions;
   for(let i=0;i<positions.length;i+=3){
-    positions[i]+=visual.particleVelocities[i]*dt;
-    positions[i+1]+=visual.particleVelocities[i+1]*dt;
-    positions[i+2]+=visual.particleVelocities[i+2]*dt;
-    if(positions[i+1]>1.2){ positions[i+1]=.12; }
-    if(visual.burst>0){
-      positions[i]*=1+dt*.9;
-      positions[i+2]*=1+dt*.9;
-    }
+    const particleIndex=i/3;
+    const angle=visual.elapsed*visual.particleAngularSpeeds[particleIndex]+visual.particlePhases[particleIndex];
+    const radius=visual.particleRadii[particleIndex]*(1+visual.burst*.65);
+    positions[i]=Math.cos(angle)*radius;
+    positions[i+2]=Math.sin(angle)*radius;
+    positions[i+1]=visual.particleBaseHeights[particleIndex]+Math.sin(visual.elapsed*(1.4+visual.particleAngularSpeeds[particleIndex])+visual.particlePhases[particleIndex])*.12;
   }
   visual.particles.geometry.attributes.position.needsUpdate=true;
   visual.burst=Math.max(0,visual.burst-dt*2);
