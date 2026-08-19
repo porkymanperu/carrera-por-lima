@@ -113,6 +113,11 @@ type Item = {
   visual?:CollectibleVisual;
   collecting?:number;
   points?:number;
+  feedbackTitle?:string;
+  feedbackBody?:string;
+  rotationSpeed?:number;
+  keepFrontFacing?:boolean;
+  modelYaw?:number;
 };
 const items: Item[] = [];
 const glowTexture = new THREE.CanvasTexture((()=>{
@@ -154,18 +159,31 @@ function createCollectibleVisual(root:THREE.Group,displayScale:number):Collectib
   return {root,model:new THREE.Group(),glow,ring,particles,particlePositions,particleVelocities,particlePhases,baseY:root.position.y,elapsed:Math.random()*6,burst:0};
 }
 
-function loadCollectibleModel(item:Item, modelUrl:string, displayScale:number) {
+function loadCollectibleModel(item:Item, modelUrl:string, displayScale:number, type:string) {
   loader.load(modelUrl,gltf=>{
     const model=gltf.scene;
     const bounds=new THREE.Box3().setFromObject(model);
     const size=bounds.getSize(new THREE.Vector3());
     model.scale.setScalar(displayScale/Math.max(size.y,.001));
+    if(type==='agua') model.rotation.y=item.modelYaw??-Math.PI/4;
     model.updateMatrixWorld(true);
     const normalizedBounds=new THREE.Box3().setFromObject(model);
     model.position.y=-normalizedBounds.min.y+.15;
     model.traverse(object=>{
       if((object as THREE.Mesh).isMesh){
         const mesh=object as THREE.Mesh; mesh.castShadow=true; mesh.receiveShadow=true;
+        if(type==='agua'){
+          const materials=Array.isArray(mesh.material)?mesh.material:[mesh.material];
+          materials.forEach(material=>{
+            if(material instanceof THREE.MeshStandardMaterial || material instanceof THREE.MeshPhysicalMaterial){
+              material.color.multiplyScalar(1.25);
+              material.metalness=Math.min(material.metalness,.2);
+              material.roughness=Math.min(material.roughness,.24);
+              material.emissive.setRGB(.14,.14,.14);
+              material.emissiveIntensity=.3;
+            }
+          });
+        }
       }
     });
     item.visual!.model.add(model);
@@ -173,13 +191,13 @@ function loadCollectibleModel(item:Item, modelUrl:string, displayScale:number) {
   },undefined,error=>console.error('No se pudo cargar collectible',modelUrl,error));
 }
 
-function createCollectible(config:{type:string;modelUrl?:string;displayScale?:number;x:number;z:number;label:string;points?:number}):Item {
+function createCollectible(config:{type:string;modelUrl?:string;displayScale?:number;x:number;z:number;label:string;points?:number;feedbackTitle?:string;feedbackBody?:string;rotationSpeed?:number;keepFrontFacing?:boolean;modelYaw?:number}):Item {
   const root=new THREE.Group(); root.position.set(config.x,.8,config.z); world.add(root);
   const displayScale=config.displayScale??1.35;
   const visual=createCollectibleVisual(root,displayScale);
-  const item:Item={mesh:root,kind:'obra',label:config.label,visual,points:config.points??100};
+  const item:Item={mesh:root,kind:'obra',label:config.label,visual,points:config.points??100,feedbackTitle:config.feedbackTitle,feedbackBody:config.feedbackBody,rotationSpeed:config.rotationSpeed,keepFrontFacing:config.keepFrontFacing,modelYaw:config.modelYaw};
   items.push(item);
-  if(config.modelUrl) loadCollectibleModel(item,config.modelUrl,displayScale);
+  if(config.modelUrl) loadCollectibleModel(item,config.modelUrl,displayScale,config.type);
   return item;
 }
 function obstacle(x:number,z:number) {
@@ -188,7 +206,8 @@ function obstacle(x:number,z:number) {
   const bar = new THREE.Mesh(new THREE.BoxGeometry(1.8,.16,.18),new THREE.MeshStandardMaterial({color:0xffffff})); bar.position.y=1.0; g.add(bar);
   g.position.set(x,0,z); world.add(g); items.push({mesh:g,kind:'obstacle'});
 }
-createCollectible({type:'bypass',modelUrl:'/assets/collectibles/bypass.glb',displayScale:.78,x:-3.2,z:34,label:'Bypass / infraestructura',points:100});
+createCollectible({type:'bypass',modelUrl:'/assets/collectibles/bypass.glb',displayScale:.78,x:-3.2,z:34,label:'Bypass / infraestructura',points:100,feedbackTitle:'OBRA EJECUTADA',feedbackBody:'Bypass / infraestructura'});
+createCollectible({type:'agua',modelUrl:'/assets/collectibles/agua.glb',displayScale:1.05,x:0,z:50,label:'Agua de emergencia',points:100,feedbackTitle:'OBRA EJECUTADA',feedbackBody:'Agua de emergencia',rotationSpeed:.18,keepFrontFacing:true,modelYaw:Math.PI/4});
 function collectible(x:number,z:number,label:string) {
   const g = new THREE.Group();
   const ring = new THREE.Mesh(new THREE.TorusGeometry(.48,.10,10,28),matGold);
@@ -196,8 +215,8 @@ function collectible(x:number,z:number,label:string) {
   const core = new THREE.Mesh(new THREE.BoxGeometry(.38,.38,.38),matBlue); core.rotation.set(.4,.5,.2); g.add(core);
   g.position.set(x,.8,z); world.add(g); items.push({mesh:g,kind:'obra',label});
 }
-collectible(0,50,'Escalera comunal — 250 metros');
-collectible(3.2,66,'Tren Lima–Chosica');
+collectible(0,90,'Escalera comunal — 250 metros');
+collectible(3.2,106,'Tren Lima–Chosica');
 obstacle(0,42); obstacle(-3.2,58); obstacle(3.2,74);
 
 const animLabel = document.querySelector<HTMLDivElement>('#animLabel')!;
@@ -256,7 +275,8 @@ function updateCollectibleVisual(item:Item,dt:number) {
     item.collecting=collectionTime;
     const progress=Math.min(collectionTime/.6,1);
     const eased=progress*progress*(3-2*progress);
-    visual.root.rotation.y+=dt*(.45+progress*12);
+    visual.root.rotation.y+=dt*((item.rotationSpeed??.45)+progress*12);
+    if(item.keepFrontFacing) visual.model.rotation.y=-visual.root.rotation.y;
     visual.root.position.y=visual.baseY+eased*.65;
     const scale=progress<.25 ? 1+progress/.25*.25 : 1.25*(1-(progress-.25)/.75);
     visual.root.scale.setScalar(Math.max(0,scale));
@@ -268,7 +288,8 @@ function updateCollectibleVisual(item:Item,dt:number) {
       visual.root.visible=false;
     }
   } else {
-    visual.root.rotation.y+=dt*.45;
+    visual.root.rotation.y+=dt*(item.rotationSpeed??.45);
+    if(item.keepFrontFacing) visual.model.rotation.y=-visual.root.rotation.y;
     visual.root.position.y=visual.baseY+Math.sin(visual.elapsed*2)*.12;
     const pulse=1+Math.sin(visual.elapsed*2.5)*.04;
     visual.root.scale.setScalar(pulse);
@@ -397,7 +418,7 @@ function animate(){
               item.collecting=0;
               item.visual.burst=1;
             }
-            showMessage('+100','OBRA EJECUTADA<br>Bypass / infraestructura');
+            showMessage(`+${item.points??100}`,`${item.feedbackTitle??'OBRA COLECTADA'}<br>${item.feedbackBody??item.label??'Obra'}`);
             speed=Math.min(8.5,speed+.18);
           }
           else if(player.position.y<.75){ item.hit=true; showMessage('OBSTÁCULO','¡Salta o cambia de carril!'); speed=Math.max(5.2,speed-.5); }
