@@ -47,6 +47,7 @@ scene.add(sun);
 
 const world = new THREE.Group();
 scene.add(world);
+const loader = new GLTFLoader();
 
 const matConcrete = new THREE.MeshStandardMaterial({ color: 0xc7c4b7, roughness: .92 });
 const matSide = new THREE.MeshStandardMaterial({ color: 0x78857e, roughness: .95 });
@@ -80,7 +81,7 @@ for (let i=0;i<100;i++) {
   box(x,y,z,1.1+Math.random()*1.5,1+Math.random()*2,1+Math.random()*1.5,mat);
 }
 
-// Trees / park silhouettes.
+// Trees / park silhouettes in paired positions beside the lanes.
 for (const x of [-4.0,-2.6,2.8,4.0]) {
   const tree = new THREE.Group();
   tree.position.set(x,0,8);
@@ -91,14 +92,133 @@ for (const x of [-4.0,-2.6,2.8,4.0]) {
 }
 
 // Collectibles and obstacles
-type Item = { mesh: THREE.Object3D; kind:'obra'|'obstacle'; label?:string; hit?:boolean };
+type CollectibleVisual = {
+  root: THREE.Group;
+  model: THREE.Group;
+  glow: THREE.Sprite;
+  ring: THREE.Mesh;
+  particles: THREE.Points;
+  particlePositions: Float32Array;
+  particleVelocities: Float32Array;
+  particlePhases: Float32Array;
+  particleRadii: Float32Array;
+  particleAngularSpeeds: Float32Array;
+  particleBaseHeights: Float32Array;
+  baseY: number;
+  elapsed: number;
+  burst: number;
+};
+type Item = {
+  mesh: THREE.Object3D;
+  kind:'obra'|'obstacle';
+  label?:string;
+  hit?:boolean;
+  visual?:CollectibleVisual;
+  collecting?:number;
+  points?:number;
+  feedbackTitle?:string;
+  feedbackBody?:string;
+  rotationSpeed?:number;
+  keepFrontFacing?:boolean;
+  modelYaw?:number;
+};
 const items: Item[] = [];
-function collectible(x:number,z:number,label:string) {
-  const g = new THREE.Group();
-  const ring = new THREE.Mesh(new THREE.TorusGeometry(.48,.10,10,28),matGold);
-  ring.rotation.x=Math.PI/2; g.add(ring);
-  const core = new THREE.Mesh(new THREE.BoxGeometry(.38,.38,.38),matBlue); core.rotation.set(.4,.5,.2); g.add(core);
-  g.position.set(x,.8,z); world.add(g); items.push({mesh:g,kind:'obra',label}); 
+const glowTexture = new THREE.CanvasTexture((()=>{
+  const canvas=document.createElement('canvas'); canvas.width=64; canvas.height=64;
+  const context=canvas.getContext('2d')!;
+  const gradient=context.createRadialGradient(32,32,2,32,32,32);
+  gradient.addColorStop(0,'rgba(255,232,120,.9)');
+  gradient.addColorStop(.35,'rgba(255,190,45,.35)');
+  gradient.addColorStop(1,'rgba(255,160,0,0)');
+  context.fillStyle=gradient; context.fillRect(0,0,64,64); return canvas;
+})());
+const glowMaterial = new THREE.SpriteMaterial({map:glowTexture,color:0xffc83d,transparent:true,opacity:.62,blending:THREE.AdditiveBlending,depthWrite:false});
+const particleMaterial = new THREE.PointsMaterial({color:0xffe08a,size:.14,transparent:true,opacity:.95,blending:THREE.AdditiveBlending,depthWrite:false,depthTest:false,sizeAttenuation:true});
+
+function createCollectibleVisual(root:THREE.Group,displayScale:number):CollectibleVisual {
+  const effectScale=displayScale/1.35;
+  const auraScale=Math.max(effectScale,.9);
+  const ring=new THREE.Mesh(new THREE.TorusGeometry(.62*effectScale,.07*effectScale,8,24),new THREE.MeshBasicMaterial({color:0xffcf48,transparent:true,opacity:.78,blending:THREE.AdditiveBlending,depthWrite:false}));
+  ring.rotation.x=Math.PI/2; ring.position.y=.12*effectScale; root.add(ring);
+  const glow=new THREE.Sprite(glowMaterial.clone()); glow.scale.set(2.1*effectScale,2.1*effectScale,1); glow.position.y=.65*effectScale; root.add(glow);
+  const count=14;
+  const particlePositions=new Float32Array(count*3);
+  const particleVelocities=new Float32Array(count*3);
+  const particlePhases=new Float32Array(count);
+  const particleRadii=new Float32Array(count);
+  const particleAngularSpeeds=new Float32Array(count);
+  const particleBaseHeights=new Float32Array(count);
+  for(let i=0;i<count;i++){
+    const angle=Math.random()*Math.PI*2; const radius=(.58+Math.random()*.38)*auraScale;
+    particlePositions[i*3]=Math.cos(angle)*radius;
+    particlePositions[i*3+1]=(.18+Math.random()*.82)*auraScale;
+    particlePositions[i*3+2]=Math.sin(angle)*radius;
+    particleVelocities[i*3]=(Math.random()-.5)*.12*auraScale;
+    particleVelocities[i*3+1]=(.12+Math.random()*.18)*auraScale;
+    particleVelocities[i*3+2]=(Math.random()-.5)*.12*auraScale;
+    particlePhases[i]=Math.random()*Math.PI*2;
+    particleRadii[i]=radius;
+    particleAngularSpeeds[i]=.75+Math.random()*.65;
+    particleBaseHeights[i]=particlePositions[i*3+1];
+  }
+  const geometry=new THREE.BufferGeometry();
+  geometry.setAttribute('position',new THREE.BufferAttribute(particlePositions,3));
+  const particles=new THREE.Points(geometry,particleMaterial.clone());
+  (particles.material as THREE.PointsMaterial).size*=effectScale;
+  root.add(particles);
+  return {root,model:new THREE.Group(),glow,ring,particles,particlePositions,particleVelocities,particlePhases,particleRadii,particleAngularSpeeds,particleBaseHeights,baseY:root.position.y,elapsed:Math.random()*6,burst:0};
+}
+
+function loadCollectibleModel(item:Item, modelUrl:string, displayScale:number, type:string) {
+  loader.load(modelUrl,gltf=>{
+    const model=gltf.scene;
+    const bounds=new THREE.Box3().setFromObject(model);
+    const size=bounds.getSize(new THREE.Vector3());
+    model.scale.setScalar(displayScale/Math.max(size.y,.001));
+    model.updateMatrixWorld(true);
+    const normalizedBounds=new THREE.Box3().setFromObject(model);
+    model.position.y=-normalizedBounds.min.y+.15;
+    model.traverse(object=>{
+      if((object as THREE.Mesh).isMesh){
+        const mesh=object as THREE.Mesh; mesh.castShadow=true; mesh.receiveShadow=true;
+        if(type==='agua'){
+          const materials=Array.isArray(mesh.material)?mesh.material:[mesh.material];
+          materials.forEach(material=>{
+            if(material instanceof THREE.MeshStandardMaterial || material instanceof THREE.MeshPhysicalMaterial){
+              material.color.multiplyScalar(1.25);
+              material.metalness=Math.min(material.metalness,.2);
+              material.roughness=Math.min(material.roughness,.24);
+              material.emissive.setRGB(.14,.14,.14);
+              material.emissiveIntensity=.3;
+            }
+          });
+        }
+        if(type==='hospital'){
+          const materials=Array.isArray(mesh.material)?mesh.material:[mesh.material];
+          materials.forEach(material=>{
+            if(material instanceof THREE.MeshStandardMaterial || material instanceof THREE.MeshPhysicalMaterial){
+              material.color.multiplyScalar(1.22);
+              material.roughness=Math.min(material.roughness,.38);
+              material.emissive.setRGB(.08,.08,.08);
+              material.emissiveIntensity=.22;
+            }
+          });
+        }
+      }
+    });
+    item.visual!.model.add(model);
+    item.visual!.root.add(item.visual!.model);
+  },undefined,error=>console.error('No se pudo cargar collectible',modelUrl,error));
+}
+
+function createCollectible(config:{type:string;modelUrl?:string;displayScale?:number;x:number;z:number;label:string;points?:number;feedbackTitle?:string;feedbackBody?:string;rotationSpeed?:number;keepFrontFacing?:boolean;modelYaw?:number}):Item {
+  const root=new THREE.Group(); root.position.set(config.x,.8,config.z); world.add(root);
+  const displayScale=config.displayScale??1.35;
+  const visual=createCollectibleVisual(root,displayScale);
+  const item:Item={mesh:root,kind:'obra',label:config.label,visual,points:config.points??100,feedbackTitle:config.feedbackTitle,feedbackBody:config.feedbackBody,rotationSpeed:config.rotationSpeed,keepFrontFacing:config.keepFrontFacing,modelYaw:config.modelYaw};
+  items.push(item);
+  if(config.modelUrl) loadCollectibleModel(item,config.modelUrl,displayScale,config.type);
+  return item;
 }
 function obstacle(x:number,z:number) {
   const g = new THREE.Group();
@@ -106,12 +226,20 @@ function obstacle(x:number,z:number) {
   const bar = new THREE.Mesh(new THREE.BoxGeometry(1.8,.16,.18),new THREE.MeshStandardMaterial({color:0xffffff})); bar.position.y=1.0; g.add(bar);
   g.position.set(x,0,z); world.add(g); items.push({mesh:g,kind:'obstacle'});
 }
-collectible(-3.2,34,'Agua de emergencia');
-collectible(0,50,'Escalera comunal — 250 metros');
-collectible(3.2,66,'Tren Lima–Chosica');
+createCollectible({type:'bypass',modelUrl:'/assets/collectibles/bypass.glb',displayScale:.78,x:-3.2,z:34,label:'Bypass / infraestructura',points:100,feedbackTitle:'OBRA EJECUTADA',feedbackBody:'Bypass / infraestructura'});
+createCollectible({type:'agua',modelUrl:'/assets/collectibles/agua.glb',displayScale:1.05,x:0,z:50,label:'Agua de emergencia',points:100,feedbackTitle:'OBRA EJECUTADA',feedbackBody:'Agua de emergencia',rotationSpeed:.18,keepFrontFacing:true,modelYaw:Math.PI/4});
+createCollectible({type:'hospital',modelUrl:'/assets/collectibles/hospital.glb',displayScale:1.15,x:-3.2,z:82,label:'Hospital / atención de emergencia',points:100,feedbackTitle:'OBRA EJECUTADA',feedbackBody:'Hospital / atención de emergencia',rotationSpeed:.28,keepFrontFacing:true,modelYaw:.26});
+createCollectible({type:'avenida',modelUrl:'/assets/collectibles/avenida.glb',displayScale:.95,x:3.2,z:62,label:'Avenida / movilidad urbana',points:100,feedbackTitle:'OBRA EJECUTADA',feedbackBody:'Avenida / movilidad urbana',rotationSpeed:-.28,keepFrontFacing:true,modelYaw:Math.PI/4});
+function collectible(x:number,z:number,label:string) {
+  const g = new THREE.Group();
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(.48,.10,10,28),matGold);
+  ring.rotation.x=Math.PI/2; g.add(ring);
+  const core = new THREE.Mesh(new THREE.BoxGeometry(.38,.38,.38),matBlue); core.rotation.set(.4,.5,.2); g.add(core);
+  g.position.set(x,.8,z); world.add(g); items.push({mesh:g,kind:'obra',label});
+}
+collectible(3.2,106,'Tren Lima–Chosica');
 obstacle(0,42); obstacle(-3.2,58); obstacle(3.2,74);
 
-const loader = new GLTFLoader();
 const animLabel = document.querySelector<HTMLDivElement>('#animLabel')!;
 const message = document.querySelector<HTMLDivElement>('#message')!;
 let player: THREE.Object3D | null = null;
@@ -155,6 +283,50 @@ function showMessage(title:string, body:string) {
   message.innerHTML=`<b>${title}</b><br>${body}`;
   message.classList.add('show');
   setTimeout(()=>message.classList.remove('show'),2200);
+}
+
+function updateCollectibleVisual(item:Item,dt:number) {
+  const visual=item.visual;
+  if(!visual) return;
+  if(item.collecting===-1) return;
+  visual.elapsed+=dt;
+  const collecting=item.collecting!==undefined;
+  if(collecting){
+    const collectionTime=(item.collecting??0)+dt;
+    item.collecting=collectionTime;
+    const progress=Math.min(collectionTime/.6,1);
+    const eased=progress*progress*(3-2*progress);
+    visual.root.rotation.y+=dt*((item.rotationSpeed??.45)+progress*12);
+    if(item.keepFrontFacing) visual.model.rotation.y=(item.modelYaw??0)-visual.root.rotation.y;
+    visual.root.position.y=visual.baseY+eased*.65;
+    const scale=progress<.25 ? 1+progress/.25*.25 : 1.25*(1-(progress-.25)/.75);
+    visual.root.scale.setScalar(Math.max(0,scale));
+    visual.glow.material.opacity=.95*(1-progress);
+    visual.ring.visible=progress<.9;
+    visual.burst=Math.max(visual.burst,1);
+    if(progress>=1){
+      item.collecting=-1;
+      visual.root.visible=false;
+    }
+  } else {
+    visual.root.rotation.y+=dt*(item.rotationSpeed??.45);
+    if(item.keepFrontFacing) visual.model.rotation.y=(item.modelYaw??0)-visual.root.rotation.y;
+    visual.root.position.y=visual.baseY+Math.sin(visual.elapsed*2)*.12;
+    const pulse=1+Math.sin(visual.elapsed*2.5)*.04;
+    visual.root.scale.setScalar(pulse);
+    visual.glow.material.opacity=.55+Math.sin(visual.elapsed*2.5)*.1;
+  }
+  const positions=visual.particlePositions;
+  for(let i=0;i<positions.length;i+=3){
+    const particleIndex=i/3;
+    const angle=visual.elapsed*visual.particleAngularSpeeds[particleIndex]+visual.particlePhases[particleIndex];
+    const radius=visual.particleRadii[particleIndex]*(1+visual.burst*.65);
+    positions[i]=Math.cos(angle)*radius;
+    positions[i+2]=Math.sin(angle)*radius;
+    positions[i+1]=visual.particleBaseHeights[particleIndex]+Math.sin(visual.elapsed*(1.4+visual.particleAngularSpeeds[particleIndex])+visual.particlePhases[particleIndex])*.12;
+  }
+  visual.particles.geometry.attributes.position.needsUpdate=true;
+  visual.burst=Math.max(0,visual.burst-dt*2);
 }
 
 loader.load('/assets/porky-animations.glb', gltf => {
@@ -232,10 +404,21 @@ function animate(){
       for(const object of world.children){
         object.position.z -= distance;
         const isGround = groundPieces.includes(object);
-        const isItem = items.some(item=>item.mesh===object);
+        const recycledItem=items.find(item=>item.mesh===object);
+        const isItem=Boolean(recycledItem);
         const recycleAt = isGround ? -105 : -60;
         if(object.position.z < recycleAt){
           object.position.z += isGround ? 168 : (isItem ? 84 : 84);
+          if(recycledItem){
+            recycledItem.hit=false;
+            recycledItem.collecting=undefined;
+            if(recycledItem.visual){
+              recycledItem.visual.root.visible=true;
+              recycledItem.visual.root.scale.setScalar(1);
+              recycledItem.visual.glow.material.opacity=.62;
+              recycledItem.visual.ring.visible=true;
+            }
+          }
         }
       }
       if(!grounded){
@@ -244,12 +427,19 @@ function animate(){
       }
       for(const item of items){
         const itemZ=item.mesh.position.z;
-        if(item.hit && itemZ<-30) item.hit=false;
         if(item.hit) continue;
         const dx=Math.abs(item.mesh.position.x-player.position.x);
         const dz=Math.abs(itemZ-player.position.z);
         if(dx<.9 && dz<.9){
-          if(item.kind==='obra'){ item.hit=true; showMessage('OBRA COLECTADA',item.label??'Obra'); speed=Math.min(8.5,speed+.18); }
+          if(item.kind==='obra'){
+            item.hit=true;
+            if(item.visual){
+              item.collecting=0;
+              item.visual.burst=1;
+            }
+            showMessage(`+${item.points??100}`,`${item.feedbackTitle??'OBRA COLECTADA'}<br>${item.feedbackBody??item.label??'Obra'}`);
+            speed=Math.min(8.5,speed+.18);
+          }
           else if(player.position.y<.75){ item.hit=true; showMessage('OBSTÁCULO','¡Salta o cambia de carril!'); speed=Math.max(5.2,speed-.5); }
         }
       }
@@ -257,7 +447,8 @@ function animate(){
     }
   }
   // Animate collectibles.
-  for(const item of items) if(item.kind==='obra'){ item.mesh.rotation.y+=dt*1.8; }
+  for(const item of items) if(item.kind==='obra'&&!item.visual){ item.mesh.rotation.y+=dt*1.8; }
+  for(const item of items) updateCollectibleVisual(item,dt);
   renderer.render(scene,camera);
 }
 animate();
