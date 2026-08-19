@@ -81,7 +81,7 @@ for (let i=0;i<100;i++) {
   box(x,y,z,1.1+Math.random()*1.5,1+Math.random()*2,1+Math.random()*1.5,mat);
 }
 
-// Trees / park silhouettes.
+// Trees / park silhouettes in paired positions beside the lanes.
 for (const x of [-4.0,-2.6,2.8,4.0]) {
   const tree = new THREE.Group();
   tree.position.set(x,0,8);
@@ -229,6 +229,7 @@ function obstacle(x:number,z:number) {
 createCollectible({type:'bypass',modelUrl:'/assets/collectibles/bypass.glb',displayScale:.78,x:-3.2,z:34,label:'Bypass / infraestructura',points:100,feedbackTitle:'OBRA EJECUTADA',feedbackBody:'Bypass / infraestructura'});
 createCollectible({type:'agua',modelUrl:'/assets/collectibles/agua.glb',displayScale:1.05,x:0,z:50,label:'Agua de emergencia',points:100,feedbackTitle:'OBRA EJECUTADA',feedbackBody:'Agua de emergencia',rotationSpeed:.18,keepFrontFacing:true,modelYaw:Math.PI/4});
 createCollectible({type:'hospital',modelUrl:'/assets/collectibles/hospital.glb',displayScale:1.15,x:-3.2,z:82,label:'Hospital / atención de emergencia',points:100,feedbackTitle:'OBRA EJECUTADA',feedbackBody:'Hospital / atención de emergencia',rotationSpeed:.28,keepFrontFacing:true,modelYaw:.26});
+createCollectible({type:'avenida',modelUrl:'/assets/collectibles/avenida.glb',displayScale:.95,x:3.2,z:62,label:'Avenida / movilidad urbana',points:100,feedbackTitle:'OBRA EJECUTADA',feedbackBody:'Avenida / movilidad urbana',rotationSpeed:-.28,keepFrontFacing:true,modelYaw:Math.PI/4});
 function collectible(x:number,z:number,label:string) {
   const g = new THREE.Group();
   const ring = new THREE.Mesh(new THREE.TorusGeometry(.48,.10,10,28),matGold);
@@ -236,7 +237,6 @@ function collectible(x:number,z:number,label:string) {
   const core = new THREE.Mesh(new THREE.BoxGeometry(.38,.38,.38),matBlue); core.rotation.set(.4,.5,.2); g.add(core);
   g.position.set(x,.8,z); world.add(g); items.push({mesh:g,kind:'obra',label});
 }
-collectible(0,90,'Escalera comunal — 250 metros');
 collectible(3.2,106,'Tren Lima–Chosica');
 obstacle(0,42); obstacle(-3.2,58); obstacle(3.2,74);
 
